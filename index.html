@@ -80,7 +80,25 @@ body { margin: 0; }
 .wr-empty { text-align: center; padding: 60px 20px; color: var(--ink-soft); }
 .wr-empty h3 { font-family: 'Fraunces', serif; color: var(--ink); font-size: 20px; margin-bottom: 6px; }
 
-.wr-recommend { margin-top: 36px; background: var(--wood); color: var(--panel); border-radius: 14px; padding: 22px; position: relative; }
+.wr-outfit-board { margin-top: 28px; background: var(--panel-alt); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.wr-outfit-board-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.wr-outfit-board-header h2 { font-family: 'Fraunces', serif; font-size: 18px; margin: 0; color: var(--ink); }
+.wr-outfit-board-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.wr-outfit-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; }
+.wr-outfit-slot { position: relative; border-radius: 10px; overflow: hidden; cursor: pointer; aspect-ratio: 3/4; display: flex; flex-direction: column; }
+.wr-outfit-slot.empty { border: 2px dashed var(--line); align-items: center; justify-content: center; gap: 4px; background: var(--panel); }
+.wr-outfit-slot.filled { border: 2px solid var(--brass); }
+.wr-outfit-slot.filled img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.wr-outfit-slot-plus { font-size: 20px; color: var(--ink-soft); }
+.wr-outfit-empty-label { font-size: 11px; color: var(--ink-soft); }
+.wr-outfit-fill-label { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(42,33,27,0.65); color: #fff; font-size: 11px; text-align: center; padding: 2px 0; }
+.wr-outfit-slot-remove { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,0.85); border: none; font-size: 11px; color: var(--coral); z-index: 2; line-height: 1; }
+.wr-outfit-picker { margin-top: 14px; }
+.wr-outfit-picker-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.wr-outfit-picker-item { flex: 0 0 auto; width: 64px; height: 84px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); padding: 0; background: none; }
+.wr-outfit-picker-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.wr-recommend { margin-top: 20px; background: var(--wood); color: var(--panel); border-radius: 14px; padding: 22px; position: relative; }
 .wr-recommend h2 { font-family: 'Fraunces', serif; font-size: 20px; margin: 0 0 4px; }
 .wr-recommend p.sub { color: var(--brass-light); font-size: 13px; margin: 0 0 16px; font-family: 'Space Mono', monospace; }
 .wr-recommend-form { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -160,6 +178,9 @@ let activeTab = '全部';
 let pendingItem = null;
 let viewingUid = null;
 let pairingInfo = null; // { paired: bool, partnerUid, partnerName }
+let outfitSlots = {};
+let activePickerCategory = null;
+let lastRecommendation = null;
 
 const root = document.getElementById('wardrobe-root');
 function uid(){ return 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
@@ -318,6 +339,18 @@ function renderApp(){
         </div>
       </div>
       <div id="wr-grid-container"></div>
+      <div class="wr-outfit-board">
+        <div class="wr-outfit-board-header">
+          <h2>試搭工作台</h2>
+          <div class="wr-outfit-board-actions">
+            <button class="wr-btn-ghost" id="wr-shuffle-btn">隨機試搭</button>
+            <button class="wr-btn-ghost" id="wr-apply-ai-btn">套用 AI 推薦</button>
+            <button class="wr-btn-ghost" id="wr-clear-outfit-btn">清空</button>
+          </div>
+        </div>
+        <div class="wr-outfit-slots" id="wr-outfit-slots"></div>
+        <div class="wr-outfit-picker" id="wr-outfit-picker"></div>
+      </div>
       <div class="wr-recommend">
         <h2>今天穿什麼？</h2>
         <p class="sub">OCCASION RECOMMENDER</p>
@@ -334,9 +367,14 @@ function renderApp(){
 
   document.getElementById('wr-signout').addEventListener('click', () => signOut(auth));
   document.getElementById('wr-pairing-btn').addEventListener('click', () => renderPairingModal({}));
+  document.getElementById('wr-shuffle-btn').addEventListener('click', shuffleOutfit);
+  document.getElementById('wr-apply-ai-btn').addEventListener('click', applyAiRecommendationToOutfit);
+  document.getElementById('wr-clear-outfit-btn').addEventListener('click', clearOutfit);
   renderClosetSwitch();
   renderTabs();
   renderGrid();
+  renderOutfitBuilder();
+  renderOutfitPicker();
   const isOwnCloset = viewingUid === currentUser.uid;
   document.getElementById('wr-toolbar-actions').style.display = isOwnCloset ? '' : 'none';
   document.getElementById('wr-upload-btn').addEventListener('click', () => document.getElementById('wr-file-input').click());
@@ -376,6 +414,9 @@ async function switchCloset(uidToView){
   if (uidToView === viewingUid) return;
   viewingUid = uidToView;
   activeTab = '全部';
+  outfitSlots = {};
+  activePickerCategory = null;
+  lastRecommendation = null;
   document.getElementById('wr-grid-container').innerHTML = `<div class="wr-status"><span class="wr-spinner"></span> 載入中...</div>`;
   wardrobe = await loadWardrobe(viewingUid);
   const isOwnCloset = viewingUid === currentUser.uid;
@@ -383,6 +424,9 @@ async function switchCloset(uidToView){
   renderClosetSwitch();
   renderTabs();
   renderGrid();
+  renderOutfitBuilder();
+  renderOutfitPicker();
+  document.getElementById('wr-result-container').innerHTML = '';
 }
 
 function renderTabs(){
@@ -444,6 +488,95 @@ function renderGrid(){
       if (item) openEditModal(item);
     });
   });
+}
+
+function renderOutfitBuilder(){
+  const slotsContainer = document.getElementById('wr-outfit-slots');
+  if (!slotsContainer) return;
+  slotsContainer.innerHTML = CATEGORIES.map(cat => {
+    const itemId = outfitSlots[cat];
+    const item = itemId ? wardrobe.find(i => i.id === itemId) : null;
+    if (item) {
+      return `<div class="wr-outfit-slot filled" data-slot="${cat}">
+        <button class="wr-outfit-slot-remove" data-remove-slot="${cat}" aria-label="移除">✕</button>
+        <img src="${item.image}" alt="${cat}" />
+        <span class="wr-outfit-fill-label">${cat}</span>
+      </div>`;
+    }
+    return `<div class="wr-outfit-slot empty" data-slot="${cat}">
+      <span class="wr-outfit-slot-plus">＋</span>
+      <span class="wr-outfit-empty-label">選${cat}</span>
+    </div>`;
+  }).join('');
+
+  slotsContainer.querySelectorAll('[data-slot]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-remove-slot]')) return;
+      const cat = el.dataset.slot;
+      activePickerCategory = activePickerCategory === cat ? null : cat;
+      renderOutfitPicker();
+    });
+  });
+  slotsContainer.querySelectorAll('[data-remove-slot]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      delete outfitSlots[btn.dataset.removeSlot];
+      renderOutfitBuilder();
+      renderOutfitPicker();
+    });
+  });
+}
+
+function renderOutfitPicker(){
+  const container = document.getElementById('wr-outfit-picker');
+  if (!container) return;
+  if (!activePickerCategory) { container.innerHTML = ''; return; }
+  const options = wardrobe.filter(i => i.category === activePickerCategory);
+  if (options.length === 0) {
+    container.innerHTML = `<p class="wr-crop-hint" style="padding:6px 0 0;">這個分類還沒有衣物</p>`;
+    return;
+  }
+  container.innerHTML = `<div class="wr-outfit-picker-strip">${options.map(i => `
+    <button class="wr-outfit-picker-item" data-pick="${i.id}"><img src="${i.image}" alt="${i.category}" /></button>
+  `).join('')}</div>`;
+  container.querySelectorAll('[data-pick]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      outfitSlots[activePickerCategory] = btn.dataset.pick;
+      activePickerCategory = null;
+      renderOutfitBuilder();
+      renderOutfitPicker();
+    });
+  });
+}
+
+function shuffleOutfit(){
+  CATEGORIES.forEach(cat => {
+    const options = wardrobe.filter(i => i.category === cat);
+    if (options.length > 0) {
+      outfitSlots[cat] = options[Math.floor(Math.random() * options.length)].id;
+    }
+  });
+  activePickerCategory = null;
+  renderOutfitBuilder();
+  renderOutfitPicker();
+}
+
+function applyAiRecommendationToOutfit(){
+  if (!lastRecommendation || lastRecommendation.length === 0) {
+    alert('目前還沒有 AI 推薦結果，先在下面輸入場合按「推薦搭配」試試看。');
+    return;
+  }
+  lastRecommendation.forEach(item => { outfitSlots[item.category] = item.id; });
+  activePickerCategory = null;
+  renderOutfitBuilder();
+  renderOutfitPicker();
+}
+
+function clearOutfit(){
+  outfitSlots = {};
+  activePickerCategory = null;
+  renderOutfitBuilder();
+  renderOutfitPicker();
 }
 
 let cropBox = { x: 10, y: 10, w: 80, h: 80 };
@@ -738,10 +871,13 @@ async function handleRecommend(){
   try {
     const rec = await callGeminiRecommend(occasion, wardrobe);
     const items = (rec.itemIds || []).map(id => wardrobe.find(i => i.id === id)).filter(Boolean);
+    lastRecommendation = items;
     resultContainer.innerHTML = `<div class="wr-result">
       <div class="wr-result-items">${items.map(i => `<img src="${i.image}" alt="${i.category}" />`).join('')}</div>
       <p>${rec.reasoning || ''}</p>
+      <button class="wr-btn-ghost" id="wr-apply-result-btn" style="margin-top:10px; border-color:var(--brass-light); color:var(--panel);">套用到試搭工作台</button>
     </div>`;
+    document.getElementById('wr-apply-result-btn').addEventListener('click', applyAiRecommendationToOutfit);
   } catch (e) {
     resultContainer.innerHTML = `<div class="wr-result"><p>推薦失敗了，請再試一次。</p></div>`;
   }
