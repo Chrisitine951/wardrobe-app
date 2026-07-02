@@ -72,6 +72,7 @@ body { margin: 0; }
 .wr-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .wr-tag { font-size: 11px; background: #fff; border: 1px solid var(--line); padding: 2px 7px; border-radius: 999px; color: var(--ink-soft); }
 .wr-del { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.85); border: none; border-radius: 50%; width: 26px; height: 26px; font-size: 14px; color: var(--coral); z-index: 2; line-height: 1; }
+.wr-edit { position: absolute; top: 8px; right: 40px; background: rgba(255,255,255,0.85); border: none; border-radius: 50%; width: 26px; height: 26px; font-size: 13px; color: var(--wood); z-index: 2; line-height: 1; }
 
 .wr-empty { text-align: center; padding: 60px 20px; color: var(--ink-soft); }
 .wr-empty h3 { font-family: 'Fraunces', serif; color: var(--ink); font-size: 20px; margin-bottom: 6px; }
@@ -242,6 +243,11 @@ async function saveItemRemote(item, base64DataUrl){
   return toSave;
 }
 
+async function updateItemTags(item){
+  await setDoc(doc(db, 'users', currentUser.uid, 'closet', item.id), item);
+  return item;
+}
+
 async function deleteItemRemote(id){
   await deleteDoc(doc(db, 'users', currentUser.uid, 'closet', id));
   try { await deleteObject(ref(storage, `closet/${currentUser.uid}/${id}.jpg`)); } catch(e) {}
@@ -355,6 +361,7 @@ function renderGrid(){
     <div class="wr-card" data-id="${item.id}">
       ${hangerPegSvg()}
       <button class="wr-del" data-del="${item.id}" aria-label="刪除">✕</button>
+      <button class="wr-edit" data-edit="${item.id}" aria-label="編輯">✎</button>
       <img src="${item.image}" alt="${item.category}" />
       <div class="wr-card-body">
         <div class="wr-card-cat">${item.category}</div>
@@ -377,14 +384,31 @@ function renderGrid(){
       await deleteItemRemote(id);
     });
   });
+
+  container.querySelectorAll('[data-edit]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.edit;
+      const item = wardrobe.find(i => i.id === id);
+      if (item) openEditModal(item);
+    });
+  });
 }
 
 let cropBox = { x: 10, y: 10, w: 80, h: 80 };
+let isEditing = false;
+
+function openEditModal(item){
+  pendingItem = { ...item };
+  isEditing = true;
+  renderModal({});
+}
 
 function clampNum(v, min, max){ return Math.max(min, Math.min(max, v)); }
 
 function openModal(rawPreviewUrl){
   pendingItem = { id: uid(), image: null, rawImage: rawPreviewUrl, category: '上衣', color: '', style: '', season: '', occasion: '', dateAdded: Date.now() };
+  isEditing = false;
   cropBox = { x: 10, y: 10, w: 80, h: 80 };
   renderModal({ step: 'crop' });
 }
@@ -525,7 +549,7 @@ function renderModal(state){
 
   const catOptions = CATEGORIES.map(c => `<option value="${c}" ${pendingItem.category === c ? 'selected' : ''}>${c}</option>`).join('');
   container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
-    <h3>確認衣物標籤</h3>
+    <h3>${isEditing ? '編輯衣物標籤' : '確認衣物標籤'}</h3>
     <img class="preview" src="${pendingItem.image}" />
     ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
     <div class="wr-field"><label>分類</label><select id="wr-field-category">${catOptions}</select></div>
@@ -535,11 +559,11 @@ function renderModal(state){
     <div class="wr-field"><label>適合場合</label><input id="wr-field-occasion" value="${pendingItem.occasion || ''}" /></div>
     <div class="wr-modal-actions">
       <button class="wr-btn-ghost" id="wr-cancel-btn">取消</button>
-      <button class="wr-btn-primary" id="wr-save-btn" style="flex:1">加入衣櫃</button>
+      <button class="wr-btn-primary" id="wr-save-btn" style="flex:1">${isEditing ? '儲存修改' : '加入衣櫃'}</button>
     </div>
   </div></div>`;
 
-  document.getElementById('wr-cancel-btn').addEventListener('click', () => { pendingItem = null; renderModal({}); });
+  document.getElementById('wr-cancel-btn').addEventListener('click', () => { pendingItem = null; isEditing = false; renderModal({}); });
   document.getElementById('wr-save-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('wr-save-btn');
     saveBtn.disabled = true;
@@ -549,17 +573,24 @@ function renderModal(state){
     pendingItem.style = document.getElementById('wr-field-style').value || '未標示';
     pendingItem.season = document.getElementById('wr-field-season').value || '未標示';
     pendingItem.occasion = document.getElementById('wr-field-occasion').value || '未標示';
-    const rawImage = pendingItem.image;
     try {
-      const saved = await saveItemRemote(pendingItem, rawImage);
-      wardrobe.unshift(saved);
+      if (isEditing) {
+        const updated = await updateItemTags(pendingItem);
+        const idx = wardrobe.findIndex(i => i.id === updated.id);
+        if (idx !== -1) wardrobe[idx] = updated;
+      } else {
+        const rawImage = pendingItem.image;
+        const saved = await saveItemRemote(pendingItem, rawImage);
+        wardrobe.unshift(saved);
+      }
       pendingItem = null;
+      isEditing = false;
       renderModal({});
       renderGrid();
     } catch (e) {
       alert('儲存失敗：' + e.message);
       saveBtn.disabled = false;
-      saveBtn.textContent = '加入衣櫃';
+      saveBtn.textContent = isEditing ? '儲存修改' : '加入衣櫃';
     }
   });
 }
