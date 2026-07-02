@@ -99,6 +99,17 @@ body { margin: 0; }
 @keyframes wr-spin { to { transform: rotate(360deg); } }
 .wr-error { color: var(--coral); font-size: 13px; margin-bottom: 10px; }
 
+.wr-crop-container { position: relative; width: 100%; max-height: 55vh; overflow: hidden; border-radius: 8px; background: #000; touch-action: none; }
+.wr-crop-container img { width: 100%; display: block; user-select: none; -webkit-user-drag: none; }
+.wr-crop-box { position: absolute; border: 2px solid var(--brass); box-shadow: 0 0 0 9999px rgba(0,0,0,0.55); touch-action: none; cursor: move; }
+.wr-crop-handle { position: absolute; width: 18px; height: 18px; background: var(--brass); border: 2px solid #fff; border-radius: 50%; touch-action: none; }
+.wr-crop-handle[data-handle="nw"] { top: -9px; left: -9px; cursor: nwse-resize; }
+.wr-crop-handle[data-handle="ne"] { top: -9px; right: -9px; cursor: nesw-resize; }
+.wr-crop-handle[data-handle="sw"] { bottom: -9px; left: -9px; cursor: nesw-resize; }
+.wr-crop-handle[data-handle="se"] { bottom: -9px; right: -9px; cursor: nwse-resize; }
+.wr-crop-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.wr-crop-hint { font-size: 12px; color: var(--ink-soft); }
+
 .wr-login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; text-align: center; padding: 24px; }
 .wr-login-screen h1 { font-family: 'Fraunces', serif; font-size: 30px; margin: 0; }
 .wr-login-screen p { color: var(--ink-soft); max-width: 320px; margin: 0; }
@@ -145,19 +156,20 @@ let pendingItem = null;
 const root = document.getElementById('wardrobe-root');
 function uid(){ return 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
 
-function resizeImage(file){
+function resizeImage(file, maxW, quality){
+  maxW = maxW || 640;
+  quality = quality || 0.72;
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const maxW = 640;
         const scale = Math.min(1, maxW / img.width);
         const canvas = document.createElement('canvas');
         canvas.width = img.width * scale;
         canvas.height = img.height * scale;
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.72));
+        resolve(canvas.toDataURL('image/jpeg', quality));
       };
       img.onerror = reject;
       img.src = e.target.result;
@@ -293,8 +305,8 @@ function renderApp(){
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    const resized = await resizeImage(file);
-    openModal(resized);
+    const workingImage = await resizeImage(file, 900, 0.85);
+    openModal(workingImage);
   });
   document.getElementById('wr-recommend-btn').addEventListener('click', handleRecommend);
   document.getElementById('wr-occasion-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleRecommend(); });
@@ -350,10 +362,85 @@ function renderGrid(){
   });
 }
 
-function openModal(previewUrl){
-  pendingItem = { id: uid(), image: previewUrl, category: '上衣', color: '', style: '', season: '', occasion: '', dateAdded: Date.now() };
+let cropBox = { x: 10, y: 10, w: 80, h: 80 };
+
+function clampNum(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+function openModal(rawPreviewUrl){
+  pendingItem = { id: uid(), image: null, rawImage: rawPreviewUrl, category: '上衣', color: '', style: '', season: '', occasion: '', dateAdded: Date.now() };
+  cropBox = { x: 10, y: 10, w: 80, h: 80 };
+  renderModal({ step: 'crop' });
+}
+
+function applyCropBoxStyle(){
+  const box = document.getElementById('wr-crop-box');
+  if (!box) return;
+  box.style.left = cropBox.x + '%';
+  box.style.top = cropBox.y + '%';
+  box.style.width = cropBox.w + '%';
+  box.style.height = cropBox.h + '%';
+}
+
+function startCropDrag(e, mode){
+  e.preventDefault();
+  const container = document.getElementById('wr-crop-container');
+  const rect = container.getBoundingClientRect();
+  const startX = e.clientX, startY = e.clientY;
+  const startBox = { ...cropBox };
+
+  function onMove(ev){
+    const dxPct = (ev.clientX - startX) / rect.width * 100;
+    const dyPct = (ev.clientY - startY) / rect.height * 100;
+    if (mode === 'move') {
+      cropBox.x = clampNum(startBox.x + dxPct, 0, 100 - startBox.w);
+      cropBox.y = clampNum(startBox.y + dyPct, 0, 100 - startBox.h);
+    } else if (mode === 'nw') {
+      const newX = clampNum(startBox.x + dxPct, 0, startBox.x + startBox.w - 10);
+      const newY = clampNum(startBox.y + dyPct, 0, startBox.y + startBox.h - 10);
+      cropBox.w = startBox.w + (startBox.x - newX);
+      cropBox.h = startBox.h + (startBox.y - newY);
+      cropBox.x = newX; cropBox.y = newY;
+    } else if (mode === 'ne') {
+      const newY = clampNum(startBox.y + dyPct, 0, startBox.y + startBox.h - 10);
+      cropBox.h = startBox.h + (startBox.y - newY);
+      cropBox.y = newY;
+      cropBox.w = clampNum(startBox.w + dxPct, 10, 100 - startBox.x);
+    } else if (mode === 'sw') {
+      const newX = clampNum(startBox.x + dxPct, 0, startBox.x + startBox.w - 10);
+      cropBox.w = startBox.w + (startBox.x - newX);
+      cropBox.x = newX;
+      cropBox.h = clampNum(startBox.h + dyPct, 10, 100 - startBox.y);
+    } else if (mode === 'se') {
+      cropBox.w = clampNum(startBox.w + dxPct, 10, 100 - startBox.x);
+      cropBox.h = clampNum(startBox.h + dyPct, 10, 100 - startBox.y);
+    }
+    applyCropBoxStyle();
+  }
+  function onUp(){
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+  }
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+}
+
+function confirmCrop(useFullFrame){
+  const imgEl = document.getElementById('wr-crop-img');
+  const box = useFullFrame ? { x: 0, y: 0, w: 100, h: 100 } : cropBox;
+  const sx = imgEl.naturalWidth * box.x / 100;
+  const sy = imgEl.naturalHeight * box.y / 100;
+  const sw = imgEl.naturalWidth * box.w / 100;
+  const sh = imgEl.naturalHeight * box.h / 100;
+  const maxW = 640;
+  const scale = Math.min(1, maxW / sw);
+  const canvas = document.createElement('canvas');
+  canvas.width = sw * scale;
+  canvas.height = sh * scale;
+  canvas.getContext('2d').drawImage(imgEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  const finalDataUrl = canvas.toDataURL('image/jpeg', 0.72);
+  pendingItem.image = finalDataUrl;
   renderModal({ loading: true });
-  runVisionTagging(previewUrl);
+  runVisionTagging(finalDataUrl);
 }
 
 async function runVisionTagging(previewUrl){
@@ -369,6 +456,38 @@ async function runVisionTagging(previewUrl){
 function renderModal(state){
   const container = document.getElementById('wr-modal-container');
   if (!pendingItem) { container.innerHTML = ''; return; }
+
+  if (state.step === 'crop') {
+    container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal" style="max-width:460px">
+      <h3>框選衣服範圍</h3>
+      <p class="wr-crop-hint" style="margin-top:-6px; margin-bottom:10px;">拖曳框框調整範圍，盡量只框住衣服本身，避開臉部跟背景，AI 辨識會更準確</p>
+      <div class="wr-crop-container" id="wr-crop-container">
+        <img id="wr-crop-img" src="${pendingItem.rawImage}" draggable="false" />
+        <div class="wr-crop-box" id="wr-crop-box">
+          <div class="wr-crop-handle" data-handle="nw"></div>
+          <div class="wr-crop-handle" data-handle="ne"></div>
+          <div class="wr-crop-handle" data-handle="sw"></div>
+          <div class="wr-crop-handle" data-handle="se"></div>
+        </div>
+      </div>
+      <div class="wr-crop-actions">
+        <button class="wr-btn-ghost" id="wr-crop-cancel">取消</button>
+        <button class="wr-btn-ghost" id="wr-crop-skip">跳過，用原圖</button>
+        <button class="wr-btn-primary" id="wr-crop-confirm" style="flex:1">裁切完成，開始辨識</button>
+      </div>
+    </div></div>`;
+
+    applyCropBoxStyle();
+    const boxEl = document.getElementById('wr-crop-box');
+    boxEl.addEventListener('pointerdown', (e) => {
+      const mode = e.target.dataset.handle || 'move';
+      startCropDrag(e, mode);
+    });
+    document.getElementById('wr-crop-cancel').addEventListener('click', () => { pendingItem = null; renderModal({}); });
+    document.getElementById('wr-crop-skip').addEventListener('click', () => confirmCrop(true));
+    document.getElementById('wr-crop-confirm').addEventListener('click', () => confirmCrop(false));
+    return;
+  }
 
   if (state.loading) {
     container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
