@@ -51,6 +51,9 @@ body { margin: 0; }
 .wr-signout { background: transparent; border: 1px solid var(--brass-light); color: var(--brass-light); padding: 5px 10px; border-radius: 999px; font-size: 12px; }
 
 .wr-tabs { display: flex; gap: 8px; padding: 14px 24px; overflow-x: auto; background: var(--panel-alt); border-bottom: 1px solid var(--line); }
+.wr-closet-tabs { display: flex; gap: 0; padding: 0 24px; background: var(--wood-dark); }
+.wr-closet-tab { flex: 1; max-width: 220px; padding: 10px 16px; border: none; background: transparent; color: var(--brass-light); font-size: 13px; font-weight: 600; border-bottom: 3px solid transparent; }
+.wr-closet-tab.active { color: #fff; border-bottom-color: var(--brass); }
 .wr-tab { border: 1px solid var(--line); background: var(--panel); padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
 .wr-tab.active { background: var(--wood); color: var(--panel); border-color: var(--wood); }
 
@@ -142,6 +145,7 @@ const firebaseConfig = {
   appId: "1:683723285124:web:17532f27f88c2b7998d8d1"
 };
 const GEMINI_PROXY_URL = "https://us-central1-cloth-ea4f9.cloudfunctions.net/geminiProxy";
+const PAIRING_URL = "https://us-central1-cloth-ea4f9.cloudfunctions.net/pairing";
 // ==========================
 
 const app = initializeApp(firebaseConfig);
@@ -154,6 +158,8 @@ let currentUser = null;
 let wardrobe = [];
 let activeTab = '全部';
 let pendingItem = null;
+let viewingUid = null;
+let pairingInfo = null; // { paired: bool, partnerUid, partnerName }
 
 const root = document.getElementById('wardrobe-root');
 function uid(){ return 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
@@ -227,11 +233,23 @@ async function callGeminiRecommend(occasion, items){
   return JSON.parse(text.replace(/```json|```/g, '').trim());
 }
 
-async function loadWardrobe(){
-  const snap = await getDocs(collection(db, 'users', currentUser.uid, 'closet'));
+async function loadWardrobe(uidToLoad){
+  const snap = await getDocs(collection(db, 'users', uidToLoad, 'closet'));
   const items = [];
   snap.forEach(d => items.push(d.data()));
   return items.sort((a,b) => b.dateAdded - a.dateAdded);
+}
+
+async function callPairing(action, extra){
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(PAIRING_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken, action, ...extra })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '配對功能發生錯誤');
+  return data;
 }
 
 async function saveItemRemote(item, base64DataUrl){
@@ -282,17 +300,19 @@ function renderApp(){
         <div class="wr-user">
           <img src="${currentUser.photoURL || ''}" alt="" />
           <span>${currentUser.displayName || currentUser.email}</span>
+          <button class="wr-signout" id="wr-pairing-btn">與伴侶共用</button>
           <button class="wr-signout" id="wr-signout">登出</button>
         </div>
       </div>
       <div class="wr-hangers">${hangerPegSvg()}${hangerPegSvg()}${hangerPegSvg()}</div>
       <div class="wr-rail"></div>
     </div>
+    <div id="wr-closet-switch"></div>
     <div class="wr-tabs" id="wr-tabs"></div>
     <div class="wr-main">
       <div class="wr-toolbar">
         <span class="wr-count" id="wr-count">共 0 件</span>
-        <div>
+        <div id="wr-toolbar-actions">
           <input type="file" id="wr-file-input" accept="image/*" style="display:none" />
           <button class="wr-btn-primary" id="wr-upload-btn">＋ 新增衣物</button>
         </div>
@@ -309,11 +329,16 @@ function renderApp(){
       </div>
     </div>
     <div id="wr-modal-container"></div>
+    <div id="wr-pairing-modal-container"></div>
   `;
 
   document.getElementById('wr-signout').addEventListener('click', () => signOut(auth));
+  document.getElementById('wr-pairing-btn').addEventListener('click', () => renderPairingModal({}));
+  renderClosetSwitch();
   renderTabs();
   renderGrid();
+  const isOwnCloset = viewingUid === currentUser.uid;
+  document.getElementById('wr-toolbar-actions').style.display = isOwnCloset ? '' : 'none';
   document.getElementById('wr-upload-btn').addEventListener('click', () => document.getElementById('wr-file-input').click());
   document.getElementById('wr-file-input').addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -335,6 +360,31 @@ function renderApp(){
   document.getElementById('wr-occasion-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleRecommend(); });
 }
 
+function renderClosetSwitch(){
+  const container = document.getElementById('wr-closet-switch');
+  if (!pairingInfo || !pairingInfo.paired) { container.innerHTML = ''; return; }
+  const isMine = viewingUid === currentUser.uid;
+  container.innerHTML = `<div class="wr-closet-tabs">
+    <button class="wr-closet-tab ${isMine ? 'active' : ''}" data-view="me">我的衣櫃</button>
+    <button class="wr-closet-tab ${!isMine ? 'active' : ''}" data-view="partner">${pairingInfo.partnerName || '對方'}的衣櫃</button>
+  </div>`;
+  container.querySelector('[data-view="me"]').addEventListener('click', () => switchCloset(currentUser.uid));
+  container.querySelector('[data-view="partner"]').addEventListener('click', () => switchCloset(pairingInfo.partnerUid));
+}
+
+async function switchCloset(uidToView){
+  if (uidToView === viewingUid) return;
+  viewingUid = uidToView;
+  activeTab = '全部';
+  document.getElementById('wr-grid-container').innerHTML = `<div class="wr-status"><span class="wr-spinner"></span> 載入中...</div>`;
+  wardrobe = await loadWardrobe(viewingUid);
+  const isOwnCloset = viewingUid === currentUser.uid;
+  document.getElementById('wr-toolbar-actions').style.display = isOwnCloset ? '' : 'none';
+  renderClosetSwitch();
+  renderTabs();
+  renderGrid();
+}
+
 function renderTabs(){
   const container = document.getElementById('wr-tabs');
   const tabs = ['全部', ...CATEGORIES];
@@ -347,12 +397,13 @@ function renderTabs(){
 function renderGrid(){
   const container = document.getElementById('wr-grid-container');
   const filtered = activeTab === '全部' ? wardrobe : wardrobe.filter(i => i.category === activeTab);
+  const isOwnCloset = viewingUid === currentUser.uid;
   document.getElementById('wr-count').textContent = `共 ${wardrobe.length} 件`;
 
   if (filtered.length === 0) {
     container.innerHTML = `<div class="wr-empty">
       <h3>${wardrobe.length === 0 ? '衣櫃還是空的' : '這個分類還沒有衣物'}</h3>
-      <p>點右上角「＋ 新增衣物」，上傳照片讓 AI 幫你自動分類。</p>
+      <p>${isOwnCloset ? '點右上角「＋ 新增衣物」，上傳照片讓 AI 幫你自動分類。' : '對方還沒有加任何衣物。'}</p>
     </div>`;
     return;
   }
@@ -360,8 +411,8 @@ function renderGrid(){
   container.innerHTML = `<div class="wr-grid">${filtered.map(item => `
     <div class="wr-card" data-id="${item.id}">
       ${hangerPegSvg()}
-      <button class="wr-del" data-del="${item.id}" aria-label="刪除">✕</button>
-      <button class="wr-edit" data-edit="${item.id}" aria-label="編輯">✎</button>
+      ${isOwnCloset ? `<button class="wr-del" data-del="${item.id}" aria-label="刪除">✕</button>
+      <button class="wr-edit" data-edit="${item.id}" aria-label="編輯">✎</button>` : ''}
       <img src="${item.image}" alt="${item.category}" />
       <div class="wr-card-body">
         <div class="wr-card-cat">${item.category}</div>
@@ -595,6 +646,83 @@ function renderModal(state){
   });
 }
 
+function renderPairingModal(state){
+  const container = document.getElementById('wr-pairing-modal-container');
+  if (state.closed) { container.innerHTML = ''; return; }
+
+  if (pairingInfo && pairingInfo.paired) {
+    container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
+      <h3>與伴侶共用</h3>
+      <p style="color:var(--ink-soft); font-size:14px; margin-bottom:16px;">目前已經跟 <strong>${pairingInfo.partnerName || '對方'}</strong> 配對成功，可以在衣櫃上方切換查看彼此的衣物（各自的新增/編輯/刪除還是只有本人能操作）。</p>
+      ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
+      <div class="wr-modal-actions">
+        <button class="wr-btn-ghost" id="wr-pairing-close">關閉</button>
+        <button class="wr-btn-primary" id="wr-unpair-btn" style="flex:1; background:var(--coral)">解除配對</button>
+      </div>
+    </div></div>`;
+    document.getElementById('wr-pairing-close').addEventListener('click', () => renderPairingModal({ closed: true }));
+    document.getElementById('wr-unpair-btn').addEventListener('click', async () => {
+      if (!confirm('確定要解除配對嗎？解除後就看不到對方的衣櫃了。')) return;
+      try {
+        await callPairing('unpair');
+        pairingInfo = { paired: false };
+        if (viewingUid !== currentUser.uid) await switchCloset(currentUser.uid);
+        renderClosetSwitch();
+        renderPairingModal({ closed: true });
+      } catch (e) {
+        renderPairingModal({ error: e.message });
+      }
+    });
+    return;
+  }
+
+  container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
+    <h3>與伴侶共用衣櫃</h3>
+    <p style="color:var(--ink-soft); font-size:14px; margin-bottom:16px;">產生一組配對碼給對方輸入，或輸入對方給你的配對碼，即可互相查看彼此的衣櫃。</p>
+    ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
+    ${state.generatedCode ? `
+      <div style="text-align:center; background:var(--panel-alt); border-radius:8px; padding:18px; margin-bottom:16px;">
+        <div style="font-family:'Space Mono',monospace; font-size:32px; letter-spacing:4px; color:var(--wood); font-weight:700;">${state.generatedCode}</div>
+        <p style="font-size:12px; color:var(--ink-soft); margin-top:8px;">把這組數字傳給對方，10 分鐘內有效</p>
+      </div>
+    ` : `
+      <button class="wr-btn-ghost" id="wr-generate-code-btn" style="width:100%; margin-bottom:16px;">產生一組配對碼給對方</button>
+    `}
+    <div class="wr-field"><label>或輸入對方的配對碼</label><input id="wr-redeem-code-input" placeholder="6 位數字" maxlength="6" /></div>
+    <div class="wr-modal-actions">
+      <button class="wr-btn-ghost" id="wr-pairing-close">關閉</button>
+      <button class="wr-btn-primary" id="wr-redeem-btn" style="flex:1">加入配對</button>
+    </div>
+  </div></div>`;
+
+  document.getElementById('wr-pairing-close').addEventListener('click', () => renderPairingModal({ closed: true }));
+  document.getElementById('wr-generate-code-btn').addEventListener('click', async () => {
+    try {
+      const result = await callPairing('generate');
+      renderPairingModal({ generatedCode: result.code });
+    } catch (e) {
+      renderPairingModal({ error: e.message });
+    }
+  });
+  document.getElementById('wr-redeem-btn').addEventListener('click', async () => {
+    const code = document.getElementById('wr-redeem-code-input').value.trim();
+    if (!code) return;
+    const btn = document.getElementById('wr-redeem-btn');
+    btn.disabled = true;
+    btn.textContent = '配對中...';
+    try {
+      const result = await callPairing('redeem', { code });
+      pairingInfo = { paired: true, partnerUid: result.partnerUid, partnerName: result.partnerName };
+      renderClosetSwitch();
+      renderPairingModal({});
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '加入配對';
+      renderPairingModal({ error: e.message, generatedCode: state.generatedCode });
+    }
+  });
+}
+
 async function handleRecommend(){
   const occasion = document.getElementById('wr-occasion-input').value.trim();
   const resultContainer = document.getElementById('wr-result-container');
@@ -620,7 +748,9 @@ onAuthStateChanged(auth, async (user) => {
   currentUser = user;
   if (!user) { renderLogin(); return; }
   root.innerHTML = `<div class="wr-login-screen"><div class="wr-spinner" style="width:24px;height:24px;"></div><p>載入衣櫃中...</p></div>`;
-  wardrobe = await loadWardrobe();
+  viewingUid = user.uid;
+  try { pairingInfo = await callPairing('status'); } catch (e) { pairingInfo = { paired: false }; }
+  wardrobe = await loadWardrobe(viewingUid);
   renderApp();
 });
 </script>
