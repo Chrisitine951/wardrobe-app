@@ -180,7 +180,13 @@ async function callGeminiVision(base64DataUrl){
     })
   });
   const data = await res.json();
-  const text = data.candidates[0].content.parts.find(p => p.text).text;
+  console.log('Gemini 原始回應：', JSON.stringify(data));
+  const candidate = data.candidates && data.candidates[0];
+  if (!candidate || !candidate.content || !candidate.content.parts) {
+    const reason = candidate ? candidate.finishReason : (data.promptFeedback ? data.promptFeedback.blockReason : 'unknown');
+    throw new Error('Gemini 未回傳可用內容，原因：' + reason);
+  }
+  const text = candidate.content.parts.find(p => p.text).text;
   return JSON.parse(text.replace(/```json|```/g, '').trim());
 }
 
