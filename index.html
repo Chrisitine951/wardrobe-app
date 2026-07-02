@@ -119,6 +119,7 @@ body { margin: 0; }
   .wr-spinner { animation: none; }
 }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/heic2any/dist/heic2any.min.js"></script>
 </head>
 <body>
 
@@ -155,6 +156,13 @@ let pendingItem = null;
 
 const root = document.getElementById('wardrobe-root');
 function uid(){ return 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
+
+async function toDisplayableBlob(file){
+  const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || /\.hei[cf]$/i.test(file.name || '');
+  if (!isHeic) return file;
+  const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+  return Array.isArray(converted) ? converted[0] : converted;
+}
 
 function resizeImage(file, maxW, quality){
   maxW = maxW || 640;
@@ -305,8 +313,17 @@ function renderApp(){
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    const workingImage = await resizeImage(file, 900, 0.85);
-    openModal(workingImage);
+    pendingItem = { id: uid(), rawImage: null };
+    renderModal({ step: 'converting' });
+    try {
+      const displayableFile = await toDisplayableBlob(file);
+      const workingImage = await resizeImage(displayableFile, 900, 0.85);
+      openModal(workingImage);
+    } catch (err) {
+      pendingItem = null;
+      renderModal({});
+      alert('這張照片沒辦法讀取，請改用 JPG 或 PNG 格式的照片再試一次。');
+    }
   });
   document.getElementById('wr-recommend-btn').addEventListener('click', handleRecommend);
   document.getElementById('wr-occasion-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleRecommend(); });
@@ -456,6 +473,14 @@ async function runVisionTagging(previewUrl){
 function renderModal(state){
   const container = document.getElementById('wr-modal-container');
   if (!pendingItem) { container.innerHTML = ''; return; }
+
+  if (state.step === 'converting') {
+    container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
+      <h3>處理照片中</h3>
+      <div class="wr-status"><span class="wr-spinner"></span> 正在轉換照片格式...</div>
+    </div></div>`;
+    return;
+  }
 
   if (state.step === 'crop') {
     container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal" style="max-width:460px">
