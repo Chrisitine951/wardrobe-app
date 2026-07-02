@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>我的線上衣櫃</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+
+#wardrobe-root {
+  --ink: #2A211B;
+  --ink-soft: #5C4F45;
+  --panel: #FBF7F0;
+  --panel-alt: #F1E9DB;
+  --wood: #5A3A25;
+  --wood-dark: #3E2817;
+  --brass: #B0813F;
+  --brass-light: #E4C48C;
+  --sage: #71805F;
+  --coral: #B4543C;
+  --line: #E1D6C3;
+  --radius: 10px;
+  font-family: 'Work Sans', sans-serif;
+  color: var(--ink);
+  background: var(--panel);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+#wardrobe-root button { font-family: inherit; cursor: pointer; }
+#wardrobe-root :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+.wr-header {
+  background: linear-gradient(180deg, var(--wood) 0%, var(--wood-dark) 100%);
+  color: var(--panel);
+  padding: 28px 24px 20px;
+  position: relative;
+  overflow: hidden;
+}
+.wr-rail { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: var(--brass); }
+.wr-header-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.wr-header h1 { font-family: 'Fraunces', serif; font-weight: 600; font-size: clamp(24px, 5vw, 32px); margin: 0 0 4px; letter-spacing: 0.3px; }
+.wr-header p { margin: 0; font-size: 13px; color: var(--brass-light); font-family: 'Space Mono', monospace; }
+.wr-hangers { display: flex; gap: 18px; margin-top: 16px; opacity: 0.9; }
+.wr-hangers svg { width: 22px; height: 22px; }
+.wr-user { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.wr-user img { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--brass); }
+.wr-signout { background: transparent; border: 1px solid var(--brass-light); color: var(--brass-light); padding: 5px 10px; border-radius: 999px; font-size: 12px; }
+
+.wr-tabs { display: flex; gap: 8px; padding: 14px 24px; overflow-x: auto; background: var(--panel-alt); border-bottom: 1px solid var(--line); }
+.wr-tab { border: 1px solid var(--line); background: var(--panel); padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--ink-soft); white-space: nowrap; }
+.wr-tab.active { background: var(--wood); color: var(--panel); border-color: var(--wood); }
+
+.wr-main { padding: 20px 24px 60px; max-width: 980px; margin: 0 auto; }
+.wr-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+.wr-count { font-family: 'Space Mono', monospace; font-size: 12px; color: var(--ink-soft); }
+.wr-btn-primary { background: var(--brass); color: #fff; border: none; padding: 10px 18px; border-radius: var(--radius); font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; }
+.wr-btn-primary:hover { background: #9a6f32; }
+.wr-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.wr-btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--ink-soft); padding: 9px 14px; border-radius: var(--radius); font-size: 13px; }
+.wr-btn-ghost:hover { border-color: var(--brass); color: var(--ink); }
+
+.wr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+.wr-card { background: var(--panel-alt); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; position: relative; display: flex; flex-direction: column; }
+.wr-card .peg { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 18px; height: 18px; opacity: 0.55; z-index: 2; }
+.wr-card img { width: 100%; aspect-ratio: 3/4; object-fit: cover; display: block; background: var(--line); }
+.wr-card-body { padding: 10px 10px 12px; }
+.wr-card-cat { font-family: 'Space Mono', monospace; font-size: 11px; color: var(--sage); text-transform: uppercase; letter-spacing: 0.5px; }
+.wr-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.wr-tag { font-size: 11px; background: #fff; border: 1px solid var(--line); padding: 2px 7px; border-radius: 999px; color: var(--ink-soft); }
+.wr-del { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.85); border: none; border-radius: 50%; width: 26px; height: 26px; font-size: 14px; color: var(--coral); z-index: 2; line-height: 1; }
+
+.wr-empty { text-align: center; padding: 60px 20px; color: var(--ink-soft); }
+.wr-empty h3 { font-family: 'Fraunces', serif; color: var(--ink); font-size: 20px; margin-bottom: 6px; }
+
+.wr-recommend { margin-top: 36px; background: var(--wood); color: var(--panel); border-radius: 14px; padding: 22px; position: relative; }
+.wr-recommend h2 { font-family: 'Fraunces', serif; font-size: 20px; margin: 0 0 4px; }
+.wr-recommend p.sub { color: var(--brass-light); font-size: 13px; margin: 0 0 16px; font-family: 'Space Mono', monospace; }
+.wr-recommend-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.wr-recommend-form input { flex: 1; min-width: 180px; padding: 11px 14px; border-radius: var(--radius); border: none; font-size: 14px; font-family: 'Work Sans', sans-serif; }
+.wr-result { margin-top: 18px; background: rgba(255,255,255,0.08); border-radius: var(--radius); padding: 16px; }
+.wr-result-items { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.wr-result-items img { width: 64px; height: 84px; object-fit: cover; border-radius: 6px; border: 2px solid var(--brass); }
+.wr-result p { margin: 0; font-size: 14px; color: var(--panel); }
+
+.wr-modal-overlay { position: fixed; inset: 0; background: rgba(42,33,27,0.55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+.wr-modal { background: var(--panel); border-radius: 14px; padding: 24px; max-width: 420px; width: 100%; max-height: 88vh; overflow-y: auto; }
+.wr-modal h3 { font-family: 'Fraunces', serif; margin: 0 0 14px; font-size: 19px; }
+.wr-modal img.preview { width: 100%; max-height: 240px; object-fit: contain; border-radius: 8px; background: var(--panel-alt); margin-bottom: 14px; }
+.wr-field { margin-bottom: 12px; }
+.wr-field label { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; font-family: 'Space Mono', monospace; }
+.wr-field input, .wr-field select { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font-size: 14px; font-family: inherit; }
+.wr-modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+.wr-status { font-size: 13px; color: var(--sage); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.wr-spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--brass); border-radius: 50%; animation: wr-spin 0.7s linear infinite; }
+@keyframes wr-spin { to { transform: rotate(360deg); } }
+.wr-error { color: var(--coral); font-size: 13px; margin-bottom: 10px; }
+
+.wr-login-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; text-align: center; padding: 24px; }
+.wr-login-screen h1 { font-family: 'Fraunces', serif; font-size: 30px; margin: 0; }
+.wr-login-screen p { color: var(--ink-soft); max-width: 320px; margin: 0; }
+.wr-google-btn { background: #fff; border: 1px solid var(--line); padding: 12px 22px; border-radius: 999px; font-weight: 600; font-size: 15px; display: inline-flex; align-items: center; gap: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+
+@media (prefers-reduced-motion: reduce) {
+  .wr-spinner { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div id="wardrobe-root"></div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
+import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
+import { getStorage, ref, uploadString, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-storage.js';
+
+// ===== 請填入你的設定 =====
+const firebaseConfig = {
+  apiKey: "AIzaSyAuVwh9kgJiEDgwI4urJ-CalQlEu62TqEw",
+  authDomain: "cloth-ea4f9.firebaseapp.com",
+  projectId: "cloth-ea4f9",
+  storageBucket: "cloth-ea4f9.firebasestorage.app",
+  messagingSenderId: "683723285124",
+  appId: "1:683723285124:web:17532f27f88c2b7998d8d1"
+};
+const GEMINI_PROXY_URL = "https://us-central1-cloth-ea4f9.cloudfunctions.net/geminiProxy";
+// ==========================
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+const CATEGORIES = ['上衣','下著','洋裝','外套','鞋子','配件'];
+let currentUser = null;
+let wardrobe = [];
+let activeTab = '全部';
+let pendingItem = null;
+
+const root = document.getElementById('wardrobe-root');
+function uid(){ return 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
+
+function resizeImage(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxW = 640;
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function callGeminiVision(base64DataUrl){
+  const base64 = base64DataUrl.split(',')[1];
+  const res = await fetch(GEMINI_PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+        { text: '請分析這張衣服照片，只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"category":"上衣或下著或洋裝或外套或鞋子或配件擇一","color":"主要顏色","style":"風格，例如休閒/正式/運動/甜美/簡約","season":"適合季節，例如春夏/秋冬/全年","occasion":"適合場合，例如上班/約會/日常/運動"}' }
+      ]}]
+    })
+  });
+  const data = await res.json();
+  const text = data.candidates[0].content.parts.find(p => p.text).text;
+  return JSON.parse(text.replace(/```json|```/g, '').trim());
+}
+
+async function callGeminiRecommend(occasion, items){
+  const simplified = items.map(i => ({ id: i.id, category: i.category, color: i.color, style: i.style, season: i.season, occasion: i.occasion }));
+  const res = await fetch(GEMINI_PROXY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { text: `我的衣櫃清單(JSON)：${JSON.stringify(simplified)}\n\n場合：${occasion}\n\n請從清單中挑選一組最適合的穿搭組合。只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"itemIds":["清單中的id"],"reasoning":"30字內的簡短搭配理由"}` }
+      ]}]
+    })
+  });
+  const data = await res.json();
+  const text = data.candidates[0].content.parts.find(p => p.text).text;
+  return JSON.parse(text.replace(/```json|```/g, '').trim());
+}
+
+async function loadWardrobe(){
+  const snap = await getDocs(collection(db, 'users', currentUser.uid, 'closet'));
+  const items = [];
+  snap.forEach(d => items.push(d.data()));
+  return items.sort((a,b) => b.dateAdded - a.dateAdded);
+}
+
+async function saveItemRemote(item, base64DataUrl){
+  const imgRef = ref(storage, `closet/${currentUser.uid}/${item.id}.jpg`);
+  await uploadString(imgRef, base64DataUrl, 'data_url');
+  const imageUrl = await getDownloadURL(imgRef);
+  const toSave = { ...item, image: imageUrl };
+  await setDoc(doc(db, 'users', currentUser.uid, 'closet', item.id), toSave);
+  return toSave;
+}
+
+async function deleteItemRemote(id){
+  await deleteDoc(doc(db, 'users', currentUser.uid, 'closet', id));
+  try { await deleteObject(ref(storage, `closet/${currentUser.uid}/${id}.jpg`)); } catch(e) {}
+}
+
+function renderLogin(){
+  root.innerHTML = `<div class="wr-login-screen">
+    <h1>我的線上衣櫃</h1>
+    <p>用 Google 帳號登入，你的衣櫃就能在手機、電腦之間同步。</p>
+    <button class="wr-google-btn" id="wr-google-login">
+      <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      使用 Google 登入
+    </button>
+  </div>`;
+  document.getElementById('wr-google-login').addEventListener('click', () => {
+    signInWithPopup(auth, new GoogleAuthProvider()).catch(err => alert('登入失敗：' + err.message));
+  });
+}
+
+function hangerPegSvg(){
+  return `<svg class="peg" viewBox="0 0 24 24" fill="none" stroke="#5A3A25" stroke-width="2"><path d="M12 4a2 2 0 0 1 2 2c0 .9-.6 1.6-1.4 1.9L12 8v2l8 4.5c.6.35 1 1 1 1.7 0 1.05-.85 1.9-1.9 1.9H4.9C3.85 18.1 3 17.25 3 16.2c0-.7.4-1.35 1-1.7L12 10V8l-.6-.1A2 2 0 0 1 10 6a2 2 0 0 1 2-2Z"/></svg>`;
+}
+
+function renderApp(){
+  root.innerHTML = `
+    <div class="wr-header">
+      <div class="wr-header-top">
+        <div>
+          <h1>我的線上衣櫃</h1>
+          <p>UPLOAD · TAG · STYLE</p>
+        </div>
+        <div class="wr-user">
+          <img src="${currentUser.photoURL || ''}" alt="" />
+          <span>${currentUser.displayName || currentUser.email}</span>
+          <button class="wr-signout" id="wr-signout">登出</button>
+        </div>
+      </div>
+      <div class="wr-hangers">${hangerPegSvg()}${hangerPegSvg()}${hangerPegSvg()}</div>
+      <div class="wr-rail"></div>
+    </div>
+    <div class="wr-tabs" id="wr-tabs"></div>
+    <div class="wr-main">
+      <div class="wr-toolbar">
+        <span class="wr-count" id="wr-count">共 0 件</span>
+        <div>
+          <input type="file" id="wr-file-input" accept="image/*" style="display:none" />
+          <button class="wr-btn-primary" id="wr-upload-btn">＋ 新增衣物</button>
+        </div>
+      </div>
+      <div id="wr-grid-container"></div>
+      <div class="wr-recommend">
+        <h2>今天穿什麼？</h2>
+        <p class="sub">OCCASION RECOMMENDER</p>
+        <div class="wr-recommend-form">
+          <input id="wr-occasion-input" type="text" placeholder="例如：約會、上班面試、朋友聚餐、運動..." />
+          <button class="wr-btn-primary" id="wr-recommend-btn">推薦搭配</button>
+        </div>
+        <div id="wr-result-container"></div>
+      </div>
+    </div>
+    <div id="wr-modal-container"></div>
+  `;
+
+  document.getElementById('wr-signout').addEventListener('click', () => signOut(auth));
+  renderTabs();
+  renderGrid();
+  document.getElementById('wr-upload-btn').addEventListener('click', () => document.getElementById('wr-file-input').click());
+  document.getElementById('wr-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const resized = await resizeImage(file);
+    openModal(resized);
+  });
+  document.getElementById('wr-recommend-btn').addEventListener('click', handleRecommend);
+  document.getElementById('wr-occasion-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleRecommend(); });
+}
+
+function renderTabs(){
+  const container = document.getElementById('wr-tabs');
+  const tabs = ['全部', ...CATEGORIES];
+  container.innerHTML = tabs.map(t => `<button class="wr-tab ${t === activeTab ? 'active' : ''}" data-tab="${t}">${t}</button>`).join('');
+  container.querySelectorAll('.wr-tab').forEach(btn => {
+    btn.addEventListener('click', () => { activeTab = btn.dataset.tab; renderGrid(); renderTabs(); });
+  });
+}
+
+function renderGrid(){
+  const container = document.getElementById('wr-grid-container');
+  const filtered = activeTab === '全部' ? wardrobe : wardrobe.filter(i => i.category === activeTab);
+  document.getElementById('wr-count').textContent = `共 ${wardrobe.length} 件`;
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="wr-empty">
+      <h3>${wardrobe.length === 0 ? '衣櫃還是空的' : '這個分類還沒有衣物'}</h3>
+      <p>點右上角「＋ 新增衣物」，上傳照片讓 AI 幫你自動分類。</p>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="wr-grid">${filtered.map(item => `
+    <div class="wr-card" data-id="${item.id}">
+      ${hangerPegSvg()}
+      <button class="wr-del" data-del="${item.id}" aria-label="刪除">✕</button>
+      <img src="${item.image}" alt="${item.category}" />
+      <div class="wr-card-body">
+        <div class="wr-card-cat">${item.category}</div>
+        <div class="wr-card-tags">
+          <span class="wr-tag">${item.color}</span>
+          <span class="wr-tag">${item.style}</span>
+          <span class="wr-tag">${item.season}</span>
+        </div>
+      </div>
+    </div>
+  `).join('')}</div>`;
+
+  container.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.del;
+      if (!confirm('確定要從衣櫃移除這件衣物嗎？')) return;
+      wardrobe = wardrobe.filter(i => i.id !== id);
+      renderGrid();
+      await deleteItemRemote(id);
+    });
+  });
+}
+
+function openModal(previewUrl){
+  pendingItem = { id: uid(), image: previewUrl, category: '上衣', color: '', style: '', season: '', occasion: '', dateAdded: Date.now() };
+  renderModal({ loading: true });
+  runVisionTagging(previewUrl);
+}
+
+async function runVisionTagging(previewUrl){
+  try {
+    const tags = await callGeminiVision(previewUrl);
+    pendingItem = { ...pendingItem, ...tags };
+    renderModal({ loading: false });
+  } catch (e) {
+    renderModal({ loading: false, error: 'AI 辨識失敗，請手動輸入標籤後再儲存。' });
+  }
+}
+
+function renderModal(state){
+  const container = document.getElementById('wr-modal-container');
+  if (!pendingItem) { container.innerHTML = ''; return; }
+
+  if (state.loading) {
+    container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
+      <h3>新增衣物</h3>
+      <img class="preview" src="${pendingItem.image}" />
+      <div class="wr-status"><span class="wr-spinner"></span> AI 辨識中...</div>
+    </div></div>`;
+    return;
+  }
+
+  const catOptions = CATEGORIES.map(c => `<option value="${c}" ${pendingItem.category === c ? 'selected' : ''}>${c}</option>`).join('');
+  container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
+    <h3>確認衣物標籤</h3>
+    <img class="preview" src="${pendingItem.image}" />
+    ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
+    <div class="wr-field"><label>分類</label><select id="wr-field-category">${catOptions}</select></div>
+    <div class="wr-field"><label>顏色</label><input id="wr-field-color" value="${pendingItem.color || ''}" /></div>
+    <div class="wr-field"><label>風格</label><input id="wr-field-style" value="${pendingItem.style || ''}" /></div>
+    <div class="wr-field"><label>適合季節</label><input id="wr-field-season" value="${pendingItem.season || ''}" /></div>
+    <div class="wr-field"><label>適合場合</label><input id="wr-field-occasion" value="${pendingItem.occasion || ''}" /></div>
+    <div class="wr-modal-actions">
+      <button class="wr-btn-ghost" id="wr-cancel-btn">取消</button>
+      <button class="wr-btn-primary" id="wr-save-btn" style="flex:1">加入衣櫃</button>
+    </div>
+  </div></div>`;
+
+  document.getElementById('wr-cancel-btn').addEventListener('click', () => { pendingItem = null; renderModal({}); });
+  document.getElementById('wr-save-btn').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('wr-save-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = '儲存中...';
+    pendingItem.category = document.getElementById('wr-field-category').value;
+    pendingItem.color = document.getElementById('wr-field-color').value || '未標示';
+    pendingItem.style = document.getElementById('wr-field-style').value || '未標示';
+    pendingItem.season = document.getElementById('wr-field-season').value || '未標示';
+    pendingItem.occasion = document.getElementById('wr-field-occasion').value || '未標示';
+    const rawImage = pendingItem.image;
+    try {
+      const saved = await saveItemRemote(pendingItem, rawImage);
+      wardrobe.unshift(saved);
+      pendingItem = null;
+      renderModal({});
+      renderGrid();
+    } catch (e) {
+      alert('儲存失敗：' + e.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = '加入衣櫃';
+    }
+  });
+}
+
+async function handleRecommend(){
+  const occasion = document.getElementById('wr-occasion-input').value.trim();
+  const resultContainer = document.getElementById('wr-result-container');
+  if (!occasion) return;
+  if (wardrobe.length === 0) {
+    resultContainer.innerHTML = `<div class="wr-result"><p>衣櫃還沒有衣物，先新增幾件吧！</p></div>`;
+    return;
+  }
+  resultContainer.innerHTML = `<div class="wr-status" style="color:#E4C48C"><span class="wr-spinner"></span> 正在配對搭配...</div>`;
+  try {
+    const rec = await callGeminiRecommend(occasion, wardrobe);
+    const items = (rec.itemIds || []).map(id => wardrobe.find(i => i.id === id)).filter(Boolean);
+    resultContainer.innerHTML = `<div class="wr-result">
+      <div class="wr-result-items">${items.map(i => `<img src="${i.image}" alt="${i.category}" />`).join('')}</div>
+      <p>${rec.reasoning || ''}</p>
+    </div>`;
+  } catch (e) {
+    resultContainer.innerHTML = `<div class="wr-result"><p>推薦失敗了，請再試一次。</p></div>`;
+  }
+}
+
+onAuthStateChanged(auth, async (user) => {
+  currentUser = user;
+  if (!user) { renderLogin(); return; }
+  root.innerHTML = `<div class="wr-login-screen"><div class="wr-spinner" style="width:24px;height:24px;"></div><p>載入衣櫃中...</p></div>`;
+  wardrobe = await loadWardrobe();
+  renderApp();
+});
+</script>
+</body>
+</html>
