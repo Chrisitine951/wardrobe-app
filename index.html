@@ -696,14 +696,17 @@ function renderPairingModal(state){
   </div></div>`;
 
   document.getElementById('wr-pairing-close').addEventListener('click', () => renderPairingModal({ closed: true }));
-  document.getElementById('wr-generate-code-btn').addEventListener('click', async () => {
-    try {
-      const result = await callPairing('generate');
-      renderPairingModal({ generatedCode: result.code });
-    } catch (e) {
-      renderPairingModal({ error: e.message });
-    }
-  });
+  const generateBtn = document.getElementById('wr-generate-code-btn');
+  if (generateBtn) {
+    generateBtn.addEventListener('click', async () => {
+      try {
+        const result = await callPairing('generate');
+        renderPairingModal({ generatedCode: result.code });
+      } catch (e) {
+        renderPairingModal({ error: e.message });
+      }
+    });
+  }
   document.getElementById('wr-redeem-btn').addEventListener('click', async () => {
     const code = document.getElementById('wr-redeem-code-input').value.trim();
     if (!code) return;
