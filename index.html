@@ -173,7 +173,7 @@ async function callGeminiVision(base64DataUrl){
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [
+      contents: [{ role: 'user', parts: [
         { inline_data: { mime_type: 'image/jpeg', data: base64 } },
         { text: '請分析這張衣服照片，只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"category":"上衣或下著或洋裝或外套或鞋子或配件擇一","color":"主要顏色","style":"風格，例如休閒/正式/運動/甜美/簡約","season":"適合季節，例如春夏/秋冬/全年","occasion":"適合場合，例如上班/約會/日常/運動"}' }
       ]}]
@@ -196,7 +196,7 @@ async function callGeminiRecommend(occasion, items){
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [
+      contents: [{ role: 'user', parts: [
         { text: `我的衣櫃清單(JSON)：${JSON.stringify(simplified)}\n\n場合：${occasion}\n\n請從清單中挑選一組最適合的穿搭組合。只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"itemIds":["清單中的id"],"reasoning":"30字內的簡短搭配理由"}` }
       ]}]
     })
