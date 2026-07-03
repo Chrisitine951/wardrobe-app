@@ -149,8 +149,8 @@ body { margin: 0; }
 
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
-import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
+import { getAuth, signOut, onAuthStateChanged, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
+import { getFirestore, collection, doc, setDoc, getDoc, deleteDoc, getDocs } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
 import { getStorage, ref, uploadString, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-storage.js';
 
 // ===== 請填入你的設定 =====
@@ -164,6 +164,7 @@ const firebaseConfig = {
 };
 const GEMINI_PROXY_URL = "https://us-central1-cloth-ea4f9.cloudfunctions.net/geminiProxy";
 const PAIRING_URL = "https://us-central1-cloth-ea4f9.cloudfunctions.net/pairing";
+const CODE_AUTH_URL = "https://us-central1-cloth-ea4f9.cloudfunctions.net/codeAuth";
 // ==========================
 
 const app = initializeApp(firebaseConfig);
@@ -178,6 +179,7 @@ let activeTab = '全部';
 let pendingItem = null;
 let viewingUid = null;
 let pairingInfo = null; // { paired: bool, partnerUid, partnerName }
+let myNickname = '我';
 let outfitSlots = {};
 let activePickerCategory = null;
 let lastRecommendation = null;
@@ -292,17 +294,84 @@ async function deleteItemRemote(id){
   try { await deleteObject(ref(storage, `closet/${currentUser.uid}/${id}.jpg`)); } catch(e) {}
 }
 
-function renderLogin(){
-  root.innerHTML = `<div class="wr-login-screen">
+function renderLogin(state){
+  state = state || {};
+  const root2 = document.getElementById('wardrobe-root');
+
+  if (state.showGeneratedCode) {
+    root2.innerHTML = `<div class="wr-login-screen">
+      <h1>你的登入代碼</h1>
+      <div style="background:var(--panel-alt); border-radius:12px; padding:20px; max-width:320px;">
+        <div style="font-family:'Space Mono',monospace; font-size:22px; letter-spacing:2px; color:var(--wood); font-weight:700; word-break:break-all;">${state.code}</div>
+      </div>
+      <p style="color:var(--coral); font-weight:600; max-width:320px;">請務必先把這組代碼抄下來或截圖保存。這是唯一的登入方式，弄丟就無法救回你的衣櫃資料。</p>
+      <button class="wr-btn-primary" id="wr-code-confirm-btn">我已經抄下來了，繼續使用</button>
+    </div>`;
+    document.getElementById('wr-code-confirm-btn').addEventListener('click', async () => {
+      try {
+        await signInWithCustomToken(auth, state.customToken);
+      } catch (e) {
+        alert('登入失敗：' + e.message);
+      }
+    });
+    return;
+  }
+
+  root2.innerHTML = `<div class="wr-login-screen">
     <h1>我的線上衣櫃</h1>
-    <p>用 Google 帳號登入，你的衣櫃就能在手機、電腦之間同步。</p>
-    <button class="wr-google-btn" id="wr-google-login">
-      <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-      使用 Google 登入
-    </button>
+    <p>用一組專屬代碼登入，你的衣櫃就能在手機、電腦之間同步。</p>
+
+    <div style="background:var(--panel-alt); border-radius:12px; padding:20px; max-width:320px; width:100%;">
+      <p style="font-size:13px; color:var(--ink-soft); margin-bottom:10px; font-weight:600;">還沒有代碼？</p>
+      <input id="wr-nickname-input" type="text" placeholder="幫自己取個暱稱（例如：小美）" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); margin-bottom:10px;" />
+      <button class="wr-btn-primary" id="wr-register-btn" style="width:100%;">產生我的登入代碼</button>
+    </div>
+
+    <div style="background:var(--panel-alt); border-radius:12px; padding:20px; max-width:320px; width:100%;">
+      <p style="font-size:13px; color:var(--ink-soft); margin-bottom:10px; font-weight:600;">已經有代碼？</p>
+      <input id="wr-code-input" type="text" placeholder="貼上你的登入代碼" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); margin-bottom:10px;" />
+      <button class="wr-btn-primary" id="wr-login-btn" style="width:100%;">登入</button>
+    </div>
+    ${state.error ? `<p style="color:var(--coral); font-size:13px;">${state.error}</p>` : ''}
   </div>`;
-  document.getElementById('wr-google-login').addEventListener('click', () => {
-    signInWithPopup(auth, new GoogleAuthProvider()).catch(err => alert('登入失敗：' + err.message));
+
+  document.getElementById('wr-register-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('wr-register-btn');
+    const nickname = document.getElementById('wr-nickname-input').value.trim() || '我';
+    btn.disabled = true;
+    btn.textContent = '產生中...';
+    try {
+      const res = await fetch(CODE_AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'register', nickname })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '產生失敗');
+      renderLogin({ showGeneratedCode: true, code: data.code, customToken: data.customToken });
+    } catch (e) {
+      renderLogin({ error: e.message });
+    }
+  });
+
+  document.getElementById('wr-login-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('wr-login-btn');
+    const code = document.getElementById('wr-code-input').value.trim();
+    if (!code) return;
+    btn.disabled = true;
+    btn.textContent = '登入中...';
+    try {
+      const res = await fetch(CODE_AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', code })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '登入失敗');
+      await signInWithCustomToken(auth, data.customToken);
+    } catch (e) {
+      renderLogin({ error: e.message });
+    }
   });
 }
 
@@ -319,8 +388,7 @@ function renderApp(){
           <p>UPLOAD · TAG · STYLE</p>
         </div>
         <div class="wr-user">
-          <img src="${currentUser.photoURL || ''}" alt="" />
-          <span>${currentUser.displayName || currentUser.email}</span>
+          <span>${myNickname}</span>
           <button class="wr-signout" id="wr-pairing-btn">與伴侶共用</button>
           <button class="wr-signout" id="wr-signout">登出</button>
         </div>
@@ -888,6 +956,10 @@ onAuthStateChanged(auth, async (user) => {
   if (!user) { renderLogin(); return; }
   root.innerHTML = `<div class="wr-login-screen"><div class="wr-spinner" style="width:24px;height:24px;"></div><p>載入衣櫃中...</p></div>`;
   viewingUid = user.uid;
+  try {
+    const profileSnap = await getDoc(doc(db, 'profiles', user.uid));
+    myNickname = (profileSnap.exists() && profileSnap.data().nickname) || '我';
+  } catch (e) { myNickname = '我'; }
   try { pairingInfo = await callPairing('status'); } catch (e) { pairingInfo = { paired: false }; }
   wardrobe = await loadWardrobe(viewingUid);
   renderApp();
