@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>我的線上衣櫃</title>
+<title>後宮佳衣三千</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Work+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
 
@@ -318,7 +318,7 @@ function renderLogin(state){
   }
 
   root2.innerHTML = `<div class="wr-login-screen">
-    <h1>我的線上衣櫃</h1>
+    <h1>後宮佳衣三千</h1>
     <p>用一組專屬代碼登入，你的衣櫃就能在手機、電腦之間同步。</p>
 
     <div style="background:var(--panel-alt); border-radius:12px; padding:20px; max-width:320px; width:100%;">
@@ -384,12 +384,12 @@ function renderApp(){
     <div class="wr-header">
       <div class="wr-header-top">
         <div>
-          <h1>我的線上衣櫃</h1>
+          <h1>後宮佳衣三千</h1>
           <p>UPLOAD · TAG · STYLE</p>
         </div>
         <div class="wr-user">
           <span>${myNickname}</span>
-          <button class="wr-signout" id="wr-pairing-btn">與伴侶共用</button>
+          <button class="wr-signout" id="wr-pairing-btn">共享</button>
           <button class="wr-signout" id="wr-signout">登出</button>
         </div>
       </div>
@@ -853,7 +853,7 @@ function renderPairingModal(state){
 
   if (pairingInfo && pairingInfo.paired) {
     container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
-      <h3>與伴侶共用</h3>
+      <h3>共享</h3>
       <p style="color:var(--ink-soft); font-size:14px; margin-bottom:16px;">目前已經跟 <strong>${pairingInfo.partnerName || '對方'}</strong> 配對成功，可以在衣櫃上方切換查看彼此的衣物（各自的新增/編輯/刪除還是只有本人能操作）。</p>
       ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
       <div class="wr-modal-actions">
@@ -878,7 +878,7 @@ function renderPairingModal(state){
   }
 
   container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
-    <h3>與伴侶共用衣櫃</h3>
+    <h3>共享衣櫃</h3>
     <p style="color:var(--ink-soft); font-size:14px; margin-bottom:16px;">產生一組配對碼給對方輸入，或輸入對方給你的配對碼，即可互相查看彼此的衣櫃。</p>
     ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
     ${state.generatedCode ? `
