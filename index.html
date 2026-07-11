@@ -148,6 +148,30 @@ body { margin: 0; }
 <div id="wardrobe-root"></div>
 
 <script type="module">
+/* ============================================================
+   後宮佳衣三千 — 程式碼地圖（維護前請先閱讀「維護守則」文件）
+   本檔為單一檔案架構：CSS 在 <style>，所有邏輯在此 <script>。
+
+   [設定區]     firebaseConfig / GEMINI_PROXY_URL / PAIRING_URL / CODE_AUTH_URL
+   [全域狀態]   currentUser, wardrobe, viewingUid, pairingInfo, outfitSlots,
+               uploadQueue, pendingItem, isEditing 等 let 變數
+   [圖片處理]   toDisplayableBlob(HEIC轉檔), resizeImage, removeBgFromPending(去背),
+               confirmCrop(裁切+白底合成)
+   [AI 呼叫]    callGeminiRaw(共用,含idToken驗證), callGeminiVision, callGeminiRecommend
+   [資料存取]   loadWardrobe, saveItemRemote, updateItemTags, deleteItemRemote(Firestore/Storage)
+   [登入]       renderLogin(代碼登入), onAuthStateChanged(檔案最底部,啟動點)
+   [衣櫃畫面]   renderApp(主畫面骨架), renderTabs, renderGrid, renderClosetSwitch, switchCloset
+   [新增/編輯]  processNextInQueue(多張佇列), openModal, openEditModal, renderModal(裁切/辨識/表單)
+   [試搭工作台] renderOutfitBuilder, renderOutfitPicker, shuffleOutfit,
+               applyAiRecommendationToOutfit, clearOutfit
+   [推薦]       handleRecommend
+   [配對共享]   callPairing, renderPairingModal
+
+   重要約定：
+   - Firestore 路徑固定為 users/{uid}/closet/{itemId}，不可改名
+   - geminiProxy 請求格式 { idToken, payload } 需與 Cloud Function 同步
+   - 前端不可存放任何 API Key
+   ============================================================ */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js';
 import { getAuth, signOut, onAuthStateChanged, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-auth.js';
 import { getFirestore, collection, doc, setDoc, getDoc, deleteDoc, getDocs } from 'https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js';
@@ -183,6 +207,8 @@ let myNickname = '我';
 let outfitSlots = {};
 let activePickerCategory = null;
 let lastRecommendation = null;
+let uploadQueue = [];
+let uploadQueueIndex = 0;
 
 const root = document.getElementById('wardrobe-root');
 function uid(){ return 'item_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
@@ -217,43 +243,41 @@ function resizeImage(file, maxW, quality){
   });
 }
 
-async function callGeminiVision(base64DataUrl){
-  const base64 = base64DataUrl.split(',')[1];
+// 共用的 Gemini 呼叫函式：會附上登入憑證(idToken)，後端會驗證，未登入者無法盜用 AI 額度
+// 注意：請求格式是 { idToken, payload }，必須跟 Cloud Function 的 geminiProxy 版本一致
+async function callGeminiRaw(contents){
+  const idToken = await currentUser.getIdToken();
   const res = await fetch(GEMINI_PROXY_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [
-        { inline_data: { mime_type: 'image/jpeg', data: base64 } },
-        { text: '請分析這張衣服照片，只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"category":"上衣或下著或洋裝或外套或鞋子或配件擇一","color":"主要顏色","style":"風格，例如休閒/正式/運動/甜美/簡約","season":"適合季節，例如春夏/秋冬/全年","occasion":"適合場合，例如上班/約會/日常/運動"}' }
-      ]}]
-    })
+    body: JSON.stringify({ idToken, payload: { contents } })
   });
   const data = await res.json();
   console.log('Gemini 原始回應：', JSON.stringify(data));
   const candidate = data.candidates && data.candidates[0];
   if (!candidate || !candidate.content || !candidate.content.parts) {
-    const reason = candidate ? candidate.finishReason : (data.promptFeedback ? data.promptFeedback.blockReason : 'unknown');
+    const reason = candidate ? candidate.finishReason
+      : (data.promptFeedback ? data.promptFeedback.blockReason
+      : (data.error ? (data.error.message || data.error) : 'unknown'));
     throw new Error('Gemini 未回傳可用內容，原因：' + reason);
   }
   const text = candidate.content.parts.find(p => p.text).text;
   return JSON.parse(text.replace(/```json|```/g, '').trim());
 }
 
+async function callGeminiVision(base64DataUrl){
+  const base64 = base64DataUrl.split(',')[1];
+  return callGeminiRaw([{ role: 'user', parts: [
+    { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+    { text: '請分析這張衣服照片，只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"category":"上衣或下著或洋裝或外套或鞋子或配件擇一","color":"主要顏色","style":"風格，例如休閒/正式/運動/甜美/簡約","season":"適合季節，例如春夏/秋冬/全年","occasion":"適合場合，例如上班/約會/日常/運動"}' }
+  ]}]);
+}
+
 async function callGeminiRecommend(occasion, items){
   const simplified = items.map(i => ({ id: i.id, category: i.category, color: i.color, style: i.style, season: i.season, occasion: i.occasion }));
-  const res = await fetch(GEMINI_PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [
-        { text: `我的衣櫃清單(JSON)：${JSON.stringify(simplified)}\n\n場合：${occasion}\n\n請從清單中挑選一組最適合的穿搭組合。只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"itemIds":["清單中的id"],"reasoning":"30字內的簡短搭配理由"}` }
-      ]}]
-    })
-  });
-  const data = await res.json();
-  const text = data.candidates[0].content.parts.find(p => p.text).text;
-  return JSON.parse(text.replace(/```json|```/g, '').trim());
+  return callGeminiRaw([{ role: 'user', parts: [
+    { text: `我的衣櫃清單(JSON)：${JSON.stringify(simplified)}\n\n場合：${occasion}\n\n請從清單中挑選一組最適合的穿搭組合。只回傳一個JSON物件，不要有其他文字、不要markdown符號。格式：{"itemIds":["清單中的id"],"reasoning":"30字內的簡短搭配理由"}` }
+  ]}]);
 }
 
 async function loadWardrobe(uidToLoad){
@@ -402,7 +426,7 @@ function renderApp(){
       <div class="wr-toolbar">
         <span class="wr-count" id="wr-count">共 0 件</span>
         <div id="wr-toolbar-actions">
-          <input type="file" id="wr-file-input" accept="image/*" style="display:none" />
+          <input type="file" id="wr-file-input" accept="image/*" multiple style="display:none" />
           <button class="wr-btn-primary" id="wr-upload-btn">＋ 新增衣物</button>
         </div>
       </div>
@@ -446,21 +470,13 @@ function renderApp(){
   const isOwnCloset = viewingUid === currentUser.uid;
   document.getElementById('wr-toolbar-actions').style.display = isOwnCloset ? '' : 'none';
   document.getElementById('wr-upload-btn').addEventListener('click', () => document.getElementById('wr-file-input').click());
-  document.getElementById('wr-file-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
+  document.getElementById('wr-file-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
     e.target.value = '';
-    if (!file) return;
-    pendingItem = { id: uid(), rawImage: null };
-    renderModal({ step: 'converting' });
-    try {
-      const displayableFile = await toDisplayableBlob(file);
-      const workingImage = await resizeImage(displayableFile, 900, 0.85);
-      openModal(workingImage);
-    } catch (err) {
-      pendingItem = null;
-      renderModal({});
-      alert('這張照片沒辦法讀取，請改用 JPG 或 PNG 格式的照片再試一次。');
-    }
+    if (files.length === 0) return;
+    uploadQueue = files;
+    uploadQueueIndex = 0;
+    processNextInQueue();
   });
   document.getElementById('wr-recommend-btn').addEventListener('click', handleRecommend);
   document.getElementById('wr-occasion-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') handleRecommend(); });
@@ -658,6 +674,34 @@ function openEditModal(item){
 
 function clampNum(v, min, max){ return Math.max(min, Math.min(max, v)); }
 
+async function processNextInQueue(){
+  if (uploadQueueIndex >= uploadQueue.length) {
+    uploadQueue = [];
+    uploadQueueIndex = 0;
+    return;
+  }
+  const file = uploadQueue[uploadQueueIndex];
+  pendingItem = { id: uid(), rawImage: null };
+  renderModal({ step: 'converting' });
+  try {
+    const displayableFile = await toDisplayableBlob(file);
+    const workingImage = await resizeImage(displayableFile, 900, 0.85);
+    openModal(workingImage);
+  } catch (err) {
+    uploadQueueIndex++;
+    if (uploadQueueIndex < uploadQueue.length) {
+      alert(`第 ${uploadQueueIndex} 張照片沒辦法讀取，可能是格式不支援，已略過，繼續下一張。`);
+      processNextInQueue();
+    } else {
+      pendingItem = null;
+      renderModal({});
+      alert(`第 ${uploadQueueIndex} 張照片沒辦法讀取，可能是格式不支援，已略過。`);
+      uploadQueue = [];
+      uploadQueueIndex = 0;
+    }
+  }
+}
+
 function openModal(rawPreviewUrl){
   pendingItem = { id: uid(), image: null, rawImage: rawPreviewUrl, category: '上衣', color: '', style: '', season: '', occasion: '', dateAdded: Date.now() };
   isEditing = false;
@@ -717,6 +761,38 @@ function startCropDrag(e, mode){
   window.addEventListener('pointerup', onUp);
 }
 
+// AI 去背：使用瀏覽器端模型(@imgly/background-removal)，只在使用者按下按鈕時才載入
+// 第一次使用會下載數十MB的模型檔，之後瀏覽器會快取。失敗時不影響原本的裁切流程。
+async function removeBgFromPending(){
+  const statusEl = document.getElementById('wr-crop-status');
+  const btn = document.getElementById('wr-bg-remove');
+  if (!statusEl || !btn) return;
+  btn.disabled = true;
+  statusEl.innerHTML = '去背處理中... 第一次使用需要下載 AI 模型（數十 MB），可能要等 1-3 分鐘，請不要關閉視窗';
+  try {
+    const mod = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.8/+esm');
+    const removeBackground = mod.removeBackground || mod.default;
+    const resultBlob = await removeBackground(pendingItem.rawImage);
+    // 合成到白色背景：去背結果是透明PNG，直接存成JPG透明處會變黑，必須先鋪白底
+    const url = URL.createObjectURL(resultBlob);
+    const img = new Image();
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    pendingItem.rawImage = canvas.toDataURL('image/jpeg', 0.85);
+    renderModal({ step: 'crop' });
+  } catch (e) {
+    statusEl.textContent = '去背失敗（可能是網路問題），可以直接用手動裁切繼續。';
+    btn.disabled = false;
+  }
+}
+
 function confirmCrop(useFullFrame){
   const imgEl = document.getElementById('wr-crop-img');
   const box = useFullFrame ? { x: 0, y: 0, w: 100, h: 100 } : cropBox;
@@ -729,7 +805,10 @@ function confirmCrop(useFullFrame){
   const canvas = document.createElement('canvas');
   canvas.width = sw * scale;
   canvas.height = sh * scale;
-  canvas.getContext('2d').drawImage(imgEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  const cropCtx = canvas.getContext('2d');
+  cropCtx.fillStyle = '#ffffff';
+  cropCtx.fillRect(0, 0, canvas.width, canvas.height);
+  cropCtx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   const finalDataUrl = canvas.toDataURL('image/jpeg', 0.72);
   pendingItem.image = finalDataUrl;
   renderModal({ loading: true });
@@ -759,8 +838,10 @@ function renderModal(state){
   }
 
   if (state.step === 'crop') {
+    const progress = uploadQueue.length > 1 ? `<p class="wr-crop-hint" style="margin:0 0 4px; font-weight:600;">第 ${uploadQueueIndex + 1} / ${uploadQueue.length} 張</p>` : '';
     container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal" style="max-width:460px">
       <h3>框選衣服範圍</h3>
+      ${progress}
       <p class="wr-crop-hint" style="margin-top:-6px; margin-bottom:10px;">拖曳框框調整範圍，盡量只框住衣服本身，避開臉部跟背景，AI 辨識會更準確</p>
       <div class="wr-crop-container" id="wr-crop-container">
         <img id="wr-crop-img" src="${pendingItem.rawImage}" draggable="false" />
@@ -772,10 +853,12 @@ function renderModal(state){
         </div>
       </div>
       <div class="wr-crop-actions">
-        <button class="wr-btn-ghost" id="wr-crop-cancel">取消</button>
+        <button class="wr-btn-ghost" id="wr-bg-remove">AI 去背</button>
+        <button class="wr-btn-ghost" id="wr-crop-cancel">${uploadQueue.length > 1 ? '跳過這張' : '取消'}</button>
         <button class="wr-btn-ghost" id="wr-crop-skip">跳過，用原圖</button>
         <button class="wr-btn-primary" id="wr-crop-confirm" style="flex:1">裁切完成，開始辨識</button>
       </div>
+      <div id="wr-crop-status" class="wr-crop-hint" style="margin-top:8px;"></div>
     </div></div>`;
 
     applyCropBoxStyle();
@@ -784,7 +867,12 @@ function renderModal(state){
       const mode = e.target.dataset.handle || 'move';
       startCropDrag(e, mode);
     });
-    document.getElementById('wr-crop-cancel').addEventListener('click', () => { pendingItem = null; renderModal({}); });
+    document.getElementById('wr-bg-remove').addEventListener('click', removeBgFromPending);
+    document.getElementById('wr-crop-cancel').addEventListener('click', () => {
+      pendingItem = null;
+      renderModal({});
+      if (uploadQueue.length > 0) { uploadQueueIndex++; processNextInQueue(); }
+    });
     document.getElementById('wr-crop-skip').addEventListener('click', () => confirmCrop(true));
     document.getElementById('wr-crop-confirm').addEventListener('click', () => confirmCrop(false));
     return;
@@ -802,6 +890,7 @@ function renderModal(state){
   const catOptions = CATEGORIES.map(c => `<option value="${c}" ${pendingItem.category === c ? 'selected' : ''}>${c}</option>`).join('');
   container.innerHTML = `<div class="wr-modal-overlay"><div class="wr-modal">
     <h3>${isEditing ? '編輯衣物標籤' : '確認衣物標籤'}</h3>
+    ${!isEditing && uploadQueue.length > 1 ? `<p class="wr-crop-hint" style="margin:-8px 0 10px; font-weight:600;">第 ${uploadQueueIndex + 1} / ${uploadQueue.length} 張</p>` : ''}
     <img class="preview" src="${pendingItem.image}" />
     ${state.error ? `<div class="wr-error">${state.error}</div>` : ''}
     <div class="wr-field"><label>分類</label><select id="wr-field-category">${catOptions}</select></div>
@@ -810,12 +899,17 @@ function renderModal(state){
     <div class="wr-field"><label>適合季節</label><input id="wr-field-season" value="${pendingItem.season || ''}" /></div>
     <div class="wr-field"><label>適合場合</label><input id="wr-field-occasion" value="${pendingItem.occasion || ''}" /></div>
     <div class="wr-modal-actions">
-      <button class="wr-btn-ghost" id="wr-cancel-btn">取消</button>
+      <button class="wr-btn-ghost" id="wr-cancel-btn">${!isEditing && uploadQueue.length > 1 ? '跳過這張' : '取消'}</button>
       <button class="wr-btn-primary" id="wr-save-btn" style="flex:1">${isEditing ? '儲存修改' : '加入衣櫃'}</button>
     </div>
   </div></div>`;
 
-  document.getElementById('wr-cancel-btn').addEventListener('click', () => { pendingItem = null; isEditing = false; renderModal({}); });
+  document.getElementById('wr-cancel-btn').addEventListener('click', () => {
+    pendingItem = null;
+    isEditing = false;
+    renderModal({});
+    if (uploadQueue.length > 0) { uploadQueueIndex++; processNextInQueue(); }
+  });
   document.getElementById('wr-save-btn').addEventListener('click', async () => {
     const saveBtn = document.getElementById('wr-save-btn');
     saveBtn.disabled = true;
@@ -836,9 +930,14 @@ function renderModal(state){
         wardrobe.unshift(saved);
       }
       pendingItem = null;
-      isEditing = false;
       renderModal({});
       renderGrid();
+      renderOutfitBuilder();
+      if (!isEditing && uploadQueue.length > 0) {
+        uploadQueueIndex++;
+        processNextInQueue();
+      }
+      isEditing = false;
     } catch (e) {
       alert('儲存失敗：' + e.message);
       saveBtn.disabled = false;
