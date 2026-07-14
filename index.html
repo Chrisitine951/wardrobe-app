@@ -84,6 +84,17 @@ body { margin: 0; }
 .wr-outfit-board-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
 .wr-outfit-board-header h2 { font-family: 'Fraunces', serif; font-size: 18px; margin: 0; color: var(--ink); }
 .wr-outfit-board-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.wr-outfit-layout { display: flex; gap: 20px; align-items: flex-start; }
+.wr-outfit-controls { flex: 1; min-width: 0; }
+.wr-mannequin { flex: 0 0 200px; position: relative; aspect-ratio: 1/2; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.wr-mannequin-silhouette { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.12; }
+.wr-mannequin-layer { position: absolute; left: 50%; transform: translateX(-50%); object-fit: contain; }
+.wr-mannequin-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-soft); font-size: 12px; text-align: center; padding: 0 20px; }
+@media (max-width: 560px) {
+  .wr-outfit-layout { flex-direction: column; align-items: center; }
+  .wr-mannequin { flex-basis: auto; width: 180px; }
+  .wr-outfit-controls { width: 100%; }
+}
 .wr-outfit-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; }
 .wr-outfit-slot { position: relative; border-radius: 10px; overflow: hidden; cursor: pointer; aspect-ratio: 3/4; display: flex; flex-direction: column; }
 .wr-outfit-slot.empty { border: 2px dashed var(--line); align-items: center; justify-content: center; gap: 4px; background: var(--panel); }
@@ -304,6 +315,13 @@ async function saveItemRemote(item, base64DataUrl){
   await uploadString(imgRef, base64DataUrl, 'data_url');
   const imageUrl = await getDownloadURL(imgRef);
   const toSave = { ...item, image: imageUrl };
+  delete toSave.rawImage;
+  // 若有去背透明版，另外上傳一份 PNG，存下網址供人形疊搭
+  if (item.cutoutImage) {
+    const cutRef = ref(storage, `closet/${currentUser.uid}/${item.id}_cutout.png`);
+    await uploadString(cutRef, item.cutoutImage, 'data_url');
+    toSave.cutoutImage = await getDownloadURL(cutRef);
+  }
   await setDoc(doc(db, 'users', currentUser.uid, 'closet', item.id), toSave);
   return toSave;
 }
@@ -440,8 +458,13 @@ function renderApp(){
             <button class="wr-btn-ghost" id="wr-clear-outfit-btn">清空</button>
           </div>
         </div>
-        <div class="wr-outfit-slots" id="wr-outfit-slots"></div>
-        <div class="wr-outfit-picker" id="wr-outfit-picker"></div>
+        <div class="wr-outfit-layout">
+          <div class="wr-mannequin" id="wr-mannequin"></div>
+          <div class="wr-outfit-controls">
+            <div class="wr-outfit-slots" id="wr-outfit-slots"></div>
+            <div class="wr-outfit-picker" id="wr-outfit-picker"></div>
+          </div>
+        </div>
       </div>
       <div class="wr-recommend">
         <h2>今天穿什麼？</h2>
@@ -609,6 +632,41 @@ function renderOutfitBuilder(){
       renderOutfitPicker();
     });
   });
+  renderMannequin();
+}
+
+// 人形穿搭預覽：把選好的衣物依身體部位由上到下疊出來。
+// 有去背版(cutoutImage)的衣物會用去背版，視覺較融合；沒有的就用原圖(image)。
+function renderMannequin(){
+  const container = document.getElementById('wr-mannequin');
+  if (!container) return;
+  // 各部位在人形框裡的垂直位置與大小（百分比），outer=外套與上衣共用上半身
+  const layout = {
+    '外套': { top: 6, height: 42, width: 92, z: 2 },
+    '上衣': { top: 8, height: 38, width: 78, z: 1 },
+    '洋裝': { top: 8, height: 60, width: 82, z: 1 },
+    '下著': { top: 42, height: 46, width: 74, z: 1 },
+    '鞋子': { top: 86, height: 12, width: 52, z: 3 },
+    '配件': { top: 2, height: 16, width: 30, z: 4 }
+  };
+  const silhouette = `<svg class="wr-mannequin-silhouette" viewBox="0 0 100 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="50" cy="22" r="15" fill="#5A3A25"/><path d="M30 40 h40 l6 55 h-14 l-2 100 h-24 l-2 -100 h-14 z" fill="#5A3A25"/></svg>`;
+
+  const filledCats = CATEGORIES.filter(cat => outfitSlots[cat]);
+  if (filledCats.length === 0) {
+    container.innerHTML = silhouette + `<div class="wr-mannequin-empty">在右邊選好衣物，就會在這裡疊出整套造型</div>`;
+    return;
+  }
+
+  const layers = filledCats.map(cat => {
+    const item = wardrobe.find(i => i.id === outfitSlots[cat]);
+    if (!item) return '';
+    const pos = layout[cat] || { top: 30, height: 40, width: 70, z: 1 };
+    const src = item.cutoutImage || item.image;
+    return `<img class="wr-mannequin-layer" src="${src}" alt="${cat}"
+      style="top:${pos.top}%; height:${pos.height}%; width:${pos.width}%; z-index:${pos.z};" />`;
+  }).join('');
+
+  container.innerHTML = silhouette + layers;
 }
 
 function renderOutfitPicker(){
@@ -773,19 +831,23 @@ async function removeBgFromPending(){
     const mod = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.8/+esm');
     const removeBackground = mod.removeBackground || mod.default;
     const resultBlob = await removeBackground(pendingItem.rawImage);
-    // 合成到白色背景：去背結果是透明PNG，直接存成JPG透明處會變黑，必須先鋪白底
     const url = URL.createObjectURL(resultBlob);
     const img = new Image();
     await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0);
+    // 透明版：供人形疊搭用（PNG 保留透明背景）
+    const tCanvas = document.createElement('canvas');
+    tCanvas.width = img.width; tCanvas.height = img.height;
+    tCanvas.getContext('2d').drawImage(img, 0, 0);
+    pendingItem.cutoutImage = tCanvas.toDataURL('image/png');
+    // 白底版：供裁切預覽與衣櫃縮圖用（JPG，透明處鋪白避免變黑）
+    const wCanvas = document.createElement('canvas');
+    wCanvas.width = img.width; wCanvas.height = img.height;
+    const wctx = wCanvas.getContext('2d');
+    wctx.fillStyle = '#ffffff';
+    wctx.fillRect(0, 0, wCanvas.width, wCanvas.height);
+    wctx.drawImage(img, 0, 0);
     URL.revokeObjectURL(url);
-    pendingItem.rawImage = canvas.toDataURL('image/jpeg', 0.85);
+    pendingItem.rawImage = wCanvas.toDataURL('image/jpeg', 0.85);
     renderModal({ step: 'crop' });
   } catch (e) {
     statusEl.textContent = '去背失敗（可能是網路問題），可以直接用手動裁切繼續。';
